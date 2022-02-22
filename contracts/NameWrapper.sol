@@ -560,12 +560,12 @@ contract NameWrapper is
         return fuses & CANNOT_TRANSFER == 0;
     }
 
-    function _makeNode(bytes32 node, bytes32 label)
+    function _makeNode(bytes32 node, bytes32 labelhash)
         private
         pure
         returns (bytes32)
     {
-        return keccak256(abi.encodePacked(node, label));
+        return keccak256(abi.encodePacked(node, labelhash));
     }
 
     function _addLabel(string memory label, bytes memory name)
