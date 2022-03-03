@@ -4,6 +4,7 @@ pragma solidity ^0.8.4;
 import "./ERC1155Fuse.sol";
 import "./Controllable.sol";
 import "../interfaces/INameWrapper.sol";
+import "../interfaces/INameWrapperUpgrade.sol";
 import "../interfaces/IMetadataService.sol";
 import "@ensdomains/ens-contracts/contracts/registry/ENS.sol";
 import "@ensdomains/ens-contracts/contracts/ethregistrar/BaseRegistrar.sol";
@@ -16,6 +17,7 @@ contract NameWrapper is
     Ownable,
     ERC1155Fuse,
     INameWrapper,
+    INameWrapperUpgrade,
     Controllable,
     IERC721Receiver
 {
@@ -29,6 +31,9 @@ contract NameWrapper is
         0x93cdeb708b7545dc668eb9280176169d1c33cfd8ed6f04690a0bcc88a93fc4ae;
     bytes32 private constant ROOT_NODE =
         0x0000000000000000000000000000000000000000000000000000000000000000;
+
+    //A contract address to a new upgraded contract if any
+    address public upgradeAddress;
 
     constructor(
         ENS _ens,
@@ -75,7 +80,7 @@ contract NameWrapper is
 
     function setMetadataService(IMetadataService _newMetadataService)
         public
-        onlyOwner()
+        onlyOwner
     {
         metadataService = _newMetadataService;
     }
@@ -87,6 +92,19 @@ contract NameWrapper is
 
     function uri(uint256 tokenId) public view override returns (string memory) {
         return metadataService.uri(tokenId);
+    }
+
+
+    /**
+     * @notice Set the upgradeAddress of the contract. only admin can do this
+     * @param _upgradeAddress address of new NameWrapper contract
+     */
+
+    function setUpgradeAddress(address _upgradeAddress)
+        public
+        onlyOwner
+    {
+            upgradeAddress = _upgradeAddress;
     }
 
     /**
@@ -150,8 +168,9 @@ contract NameWrapper is
      * @notice Wraps a .eth domain, creating a new token and sending the original ERC721 token to this *         contract
      * @dev Can be called by the owner of the name in the .eth registrar or an authorised caller on the *      registrar
      * @param label label as a string of the .eth domain to wrap
-     * @param _fuses initial fuses to set
      * @param wrappedOwner Owner of the name in this contract
+     * @param _fuses initial fuses to set
+     * @param resolver the resolver contract in the registry
      */
 
     function wrapETH2LD(
@@ -159,7 +178,7 @@ contract NameWrapper is
         address wrappedOwner,
         uint96 _fuses,
         address resolver
-    ) public override {
+    ) public override(INameWrapper, INameWrapperUpgrade) {
         uint256 tokenId = uint256(keccak256(bytes(label)));
         address owner = registrar.ownerOf(tokenId);
 
@@ -173,7 +192,7 @@ contract NameWrapper is
         // transfer the token from the user to this contract
         registrar.transferFrom(owner, address(this), tokenId);
 
-        // transfer the ens record back to the new owner (this contract)
+        // transfer the ens record to the new owner (this contract)
         registrar.reclaim(tokenId, address(this));
 
         _wrapETH2LD(label, wrappedOwner, _fuses, resolver);
@@ -221,8 +240,9 @@ contract NameWrapper is
      * @notice Wraps a non .eth domain, of any kind. Could be a DNSSEC name vitalik.xyz or a subdomain
      * @dev Can be called by the owner in the registry or an authorised caller in the registry
      * @param name The name to wrap, in DNS format
-     * @param _fuses initial fuses to set represented as a number. Check getFuses() for more info
      * @param wrappedOwner Owner of the name in this contract
+     * @param _fuses initial fuses to set represented as a number. Check getFuses() for more info
+     * @param resolver the resolver contract in the registry
      */
 
     function wrap(
@@ -230,7 +250,7 @@ contract NameWrapper is
         address wrappedOwner,
         uint96 _fuses,
         address resolver
-    ) public override {
+    ) public override(INameWrapper, INameWrapperUpgrade) {
         (bytes32 labelhash, uint offset) = name.readLabel(0);
         bytes32 parentNode = name.namehash(offset);
         bytes32 node = _makeNode(parentNode, labelhash);
@@ -315,6 +335,71 @@ contract NameWrapper is
 
         emit FusesBurned(node, newFuses);
     }
+
+    /**
+     * @notice Upgrades a .eth domain, creating a new token, sending the original ERC721 token to the
+     *  this contract, and calling the upgradeBurnETH2LD function of the old contract 
+     * @dev Can be called by the owner of the name (ERC721 token) in the registrar contract  
+     * @param label label as a string of the .eth domain to wrap
+     * @param wrappedOwner The owner of the wrapped name.
+     * @param _fuses initial fuses to set
+     * @param resolver the resolver contract in the registry
+     */
+
+    function upgradeETH2LD(
+        string calldata label,
+        address wrappedOwner,
+        uint96 _fuses,
+        address resolver
+    ) public override{
+
+        require(
+             upgradeAddress != address(0),
+            "NameWrapper: upgradeAddress is the zero address"
+        );
+
+        INameWrapperUpgrade(upgradeAddress).wrapETH2LD(label, wrappedOwner, _fuses, resolver);
+
+        bytes32 labelhash = keccak256(bytes(label));
+        bytes32 node = _makeNode(ETH_NODE, labelhash);       
+
+        // burn token and fuse data
+        _burn(uint256(node));
+
+    }
+
+    /**
+     * @notice Wraps a non .eth domain, of any kind. Could be a DNSSEC name vitalik.xyz or a subdomain
+     * @dev Can be called by the owner in the registry or an authorised caller in the registry
+     * @param name The name to wrap, in DNS format
+     * @param wrappedOwner Owner of the name in this contract
+     * @param _fuses initial fuses to set represented as a number. Check getFuses() for more info
+     * @param resolver the resolver contract in the registry
+     */
+
+    function upgrade(
+        bytes calldata name,
+        address wrappedOwner,
+        uint96 _fuses,
+        address resolver
+    ) public override{
+
+        require(
+             upgradeAddress != address(0),
+            "NameWrapper: upgradeAddress is the zero address"
+        );
+
+        INameWrapperUpgrade(upgradeAddress).wrap(name, wrappedOwner, _fuses, resolver);
+
+        (bytes32 labelhash, uint offset) = name.readLabel(0);
+        bytes32 parentNode = name.namehash(offset);
+        bytes32 node = _makeNode(parentNode, labelhash);
+
+        // burn token and fuse data
+        _burn(uint256(node));
+    }
+
+
 
     /**
      * @notice Sets records for the subdomain in the ENS Registry
@@ -541,7 +626,7 @@ contract NameWrapper is
 
         require(
             keccak256(bytes(label)) == bytes32(tokenId),
-            "NameWrapper: Token id does match keccak(label) of label provided in data field"
+            "NameWrapper: Token id does not match keccak(label) of label provided in data field"
         );
 
         bytes32 labelhash = keccak256(bytes(label));
@@ -592,9 +677,12 @@ contract NameWrapper is
         super._mint(node, wrappedOwner, _fuses);
     }
 
-    function _wrap(bytes32 node, bytes memory name, address wrappedOwner, uint96 fuses)
-        internal
-    {
+    function _wrap(
+        bytes32 node, 
+        bytes memory name, 
+        address wrappedOwner, 
+        uint96 fuses
+    ) internal {
         names[node] = name;
 
         _mint(node, wrappedOwner, fuses);
