@@ -97,7 +97,7 @@ contract NameWrapper is
 
     /**
      * @notice Set the upgradeAddress of the contract. only admin can do this
-     * @param _upgradeAddress address of new NameWrapper contract
+     * @param _upgradeAddress address of an upgraded contract
      */
 
     function setUpgradeAddress(address _upgradeAddress)
@@ -337,8 +337,8 @@ contract NameWrapper is
     }
 
     /**
-     * @notice Upgrades a .eth domain, creating a new token, sending the original ERC721 token to the
-     *  this contract, and calling the upgradeBurnETH2LD function of the old contract 
+     * @notice Upgrades a .eth wrapped domain by calling the wrapETH2LD function of the upgradeAddress
+     *  contract and burning the token of this contract.  
      * @dev Can be called by the owner of the name (ERC721 token) in the registrar contract  
      * @param label label as a string of the .eth domain to wrap
      * @param wrappedOwner The owner of the wrapped name.
@@ -351,17 +351,26 @@ contract NameWrapper is
         address wrappedOwner,
         uint96 _fuses,
         address resolver
-    ) public override{
+    ) 
+        public 
+        override
+    {
 
         require(
              upgradeAddress != address(0),
             "NameWrapper: upgradeAddress is the zero address"
         );
 
-        INameWrapperUpgrade(upgradeAddress).wrapETH2LD(label, wrappedOwner, _fuses, resolver);
-
         bytes32 labelhash = keccak256(bytes(label));
         bytes32 node = _makeNode(ETH_NODE, labelhash);       
+
+        require(
+            isTokenOwnerOrApproved(node, msg.sender),
+            "NameWrapper: msg.sender is not the owner or approved"
+        );
+
+        INameWrapperUpgrade(upgradeAddress).wrapETH2LD(label, wrappedOwner, _fuses, resolver);
+
 
         // burn token and fuse data
         _burn(uint256(node));
@@ -389,11 +398,18 @@ contract NameWrapper is
             "NameWrapper: upgradeAddress is the zero address"
         );
 
-        INameWrapperUpgrade(upgradeAddress).wrap(name, wrappedOwner, _fuses, resolver);
-
         (bytes32 labelhash, uint offset) = name.readLabel(0);
         bytes32 parentNode = name.namehash(offset);
         bytes32 node = _makeNode(parentNode, labelhash);
+
+        require(
+            isTokenOwnerOrApproved(node, msg.sender),
+            "NameWrapper: msg.sender is not the owner or approved"
+        );
+
+        INameWrapperUpgrade(upgradeAddress).wrap(name, wrappedOwner, _fuses, resolver);
+
+
 
         // burn token and fuse data
         _burn(uint256(node));

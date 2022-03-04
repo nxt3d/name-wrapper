@@ -2342,7 +2342,7 @@ describe('Name Wrapper', () => {
           )
         )
       ).to.be.revertedWith(
-        'NameWrapper: Token id does match keccak(label) of label provided in data field'
+        'NameWrapper: Token id does not match keccak(label) of label provided in data field'
       )
     })
 
